@@ -1,0 +1,47 @@
+virtual-classroom/
+├── config/
+│   ├── config.php
+│   └── database.php
+├── includes/
+│   ├── auth.php
+│   ├── functions.php
+│   └── header.php
+|   |___footer.php
+|
+├── assets/
+│   ├── css/
+│   │   └── style.css
+│   └── js/
+│       └── main.js
+├── classes/
+│   ├── User.php
+│   ├── Course.php
+│   ├── Assignment.php
+│   ├── Submission.php
+│   ├── Material.php
+│   ├── Discussion.php
+│   └── Comment.php
+├── admin/
+│   ├── index.php
+│   ├── users.php // Problem in creating a user
+│   ├── courses.php
+│   └── reports.php
+├── teacher/
+│   ├── index.php
+│   ├── create-course.php
+│   ├── create-assignment.php
+│   └── grades.php*
+│   └── course-details.php*
+│   └── assignments.php*
+├── student/
+│   ├── index.php
+│   ├── courses.php
+│   ├── assignments.php
+│   └── discussions.php
+│   └── assignment-details.php*
+│   └── course-details.php*
+├── login.php
+├── register.php
+├── index.php
+├── logout.php
+└── database.sql
