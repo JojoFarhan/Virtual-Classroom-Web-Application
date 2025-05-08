@@ -1,0 +1,284 @@
+<?php
+// classes/User.php
+class User {
+    private $pdo;
+    private $user_id;
+    private $username;
+    private $email;
+    private $first_name;
+    private $last_name;
+    private $roles = [];
+
+    public function __construct($pdo) {
+        $this->pdo = $pdo;
+    }
+
+    public function getUserById($id) {
+        $stmt = $this->pdo->prepare("SELECT * FROM users WHERE user_id = ?");
+        $stmt->execute([$id]);
+        $user = $stmt->fetch();
+        
+        if ($user) {
+            $this->user_id = $user['user_id'];
+            $this->username = $user['username'];
+            $this->email = $user['email'];
+            $this->first_name = $user['first_name'];
+            $this->last_name = $user['last_name'];
+            $this->loadUserRoles();
+            return true;
+        }
+        return false;
+    }
+
+    public function register($username, $email, $password, $first_name, $last_name) {
+        // Check if username or email already exists
+        $stmt = $this->pdo->prepare("SELECT user_id FROM users WHERE username = ? OR email = ?");
+        $stmt->execute([$username, $email]);
+        if ($stmt->rowCount() > 0) {
+            return false; // Username or email already exists
+        }
+
+        // Hash the password
+        $password_hash = password_hash($password, PASSWORD_DEFAULT);
+        
+        // Insert the new user
+        $stmt = $this->pdo->prepare("
+            INSERT INTO users (username, email, password_hash, first_name, last_name) 
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        
+        $success = $stmt->execute([$username, $email, $password_hash, $first_name, $last_name]);
+        
+        if ($success) {
+            // Assign default student role
+            $user_id = $this->pdo->lastInsertId();
+            $this->assignRole($user_id, 3); // 3 = student role
+            return $user_id;
+        }
+        
+        return false;
+    }
+
+    public function login($username_or_email, $password) {
+        $stmt = $this->pdo->prepare("
+            SELECT * FROM users 
+            WHERE username = ? OR email = ?
+        ");
+        $stmt->execute([$username_or_email, $username_or_email]);
+        $user = $stmt->fetch();
+        
+        if ($user && password_verify($password, $user['password_hash'])) {
+            // Update last login time
+            $update = $this->pdo->prepare("UPDATE users SET last_login = NOW() WHERE user_id = ?");
+            $update->execute([$user['user_id']]);
+            
+            // Set session variables
+            $_SESSION['user_id'] = $user['user_id'];
+            $_SESSION['username'] = $user['username'];
+            
+            // Load user data
+            $this->user_id = $user['user_id'];
+            $this->username = $user['username'];
+            $this->email = $user['email'];
+            $this->first_name = $user['first_name'];
+            $this->last_name = $user['last_name'];
+            
+            // Load user roles
+            $this->loadUserRoles();
+            $_SESSION['roles'] = $this->roles;
+            
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function loadUserRoles() {
+        $stmt = $this->pdo->prepare("
+            SELECT r.role_id, r.role_name 
+            FROM roles r
+            JOIN user_roles ur ON r.role_id = ur.role_id
+            WHERE ur.user_id = ?
+        ");
+        $stmt->execute([$this->user_id]);
+        $this->roles = $stmt->fetchAll();
+    }
+
+    public function assignRole($user_id, $role_id) {
+        $stmt = $this->pdo->prepare("
+            INSERT INTO user_roles (user_id, role_id) 
+            VALUES (?, ?)
+        ");
+        return $stmt->execute([$user_id, $role_id]);
+    }
+
+    public function hasRole($role_name) {
+        foreach ($this->roles as $role) {
+            if ($role['role_name'] === $role_name) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public function getAllUsers() {
+        $stmt = $this->pdo->query("
+            SELECT u.user_id, u.username, u.email, u.first_name, u.last_name, 
+                   u.created_at, u.last_login, u.user_status,
+                   GROUP_CONCAT(r.role_name) as roles
+            FROM users u
+            LEFT JOIN user_roles ur ON u.user_id = ur.user_id
+            LEFT JOIN roles r ON ur.role_id = r.role_id
+            GROUP BY u.user_id
+            ORDER BY u.last_name, u.first_name
+        ");
+        return $stmt->fetchAll();
+    }
+
+    // Getters
+    public function getId() { return $this->user_id; }
+    public function getUsername() { return $this->username; }
+    public function getEmail() { return $this->email; }
+    public function getFirstName() { return $this->first_name; }
+    public function getLastName() { return $this->last_name; }
+    public function getFullName() { return $this->first_name . ' ' . $this->last_name; }
+    public function getRoles() { return $this->roles; }
+} ?>
+
+
+<?php
+// classes/Course.php
+class Course {
+    private $pdo;
+    
+    public function __construct($pdo) {
+        $this->pdo = $pdo;
+    }
+    
+    public function createCourse($name, $code, $description, $creator_id) {
+        // Check if course code already exists
+        $check = $this->pdo->prepare("SELECT course_id FROM courses WHERE course_code = ?");
+        $check->execute([$code]);
+        if ($check->rowCount() > 0) {
+            return ['success' => false, 'message' => 'Course code already exists'];
+        }
+        
+        $stmt = $this->pdo->prepare("
+            INSERT INTO courses (course_name, course_code, description, creator_id)
+            VALUES (?, ?, ?, ?)
+        ");
+        
+        $result = $stmt->execute([$name, $code, $description, $creator_id]);
+        
+        if ($result) {
+            $course_id = $this->pdo->lastInsertId();
+            
+            // Automatically enroll the creator as a teacher
+            $enroll = $this->pdo->prepare("
+                INSERT INTO enrollments (user_id, course_id, enrollment_type)
+                VALUES (?, ?, 'teacher')
+            ");
+            $enroll->execute([$creator_id, $course_id]);
+            
+            return ['success' => true, 'course_id' => $course_id];
+        } else {
+            return ['success' => false, 'message' => 'Failed to create course'];
+        }
+    }
+    
+    public function getCourseById($course_id) {
+        $stmt = $this->pdo->prepare("
+            SELECT c.*, u.first_name, u.last_name
+            FROM courses c
+            JOIN users u ON c.creator_id = u.user_id
+            WHERE c.course_id = ?
+        ");
+        $stmt->execute([$course_id]);
+        return $stmt->fetch();
+    }
+    
+    public function getCoursesByUser($user_id, $role = null) {
+        $query = "
+            SELECT c.*, e.enrollment_type
+            FROM courses c
+            JOIN enrollments e ON c.course_id = e.course_id
+            WHERE e.user_id = ?
+        ";
+        
+        $params = [$user_id];
+        
+        if ($role) {
+            $query .= " AND e.enrollment_type = ?";
+            $params[] = $role;
+        }
+        
+        $query .= " ORDER BY c.created_at DESC";
+        
+        $stmt = $this->pdo->prepare($query);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+    
+    public function enrollUser($course_id, $user_id, $enrollment_type = 'student') {
+        // Check if already enrolled
+        $check = $this->pdo->prepare("
+            SELECT enrollment_id FROM enrollments 
+            WHERE course_id = ? AND user_id = ?
+        ");
+        $check->execute([$course_id, $user_id]);
+        
+        if ($check->rowCount() > 0) {
+            return ['success' => false, 'message' => 'User already enrolled in this course'];
+        }
+        
+        // Enroll user
+        $stmt = $this->pdo->prepare("
+            INSERT INTO enrollments (course_id, user_id, enrollment_type)
+            VALUES (?, ?, ?)
+        ");
+        
+        $result = $stmt->execute([$course_id, $user_id, $enrollment_type]);
+        
+        if ($result) {
+            return ['success' => true];
+        } else {
+            return ['success' => false, 'message' => 'Failed to enroll user'];
+        }
+    }
+    
+    public function getEnrolledUsers($course_id, $enrollment_type = null) {
+        $query = "
+            SELECT u.user_id, u.username, u.first_name, u.last_name, 
+                   u.email, e.enrollment_type, e.enrolled_at
+            FROM users u
+            JOIN enrollments e ON u.user_id = e.user_id
+            WHERE e.course_id = ?
+        ";
+        
+        $params = [$course_id];
+        
+        if ($enrollment_type) {
+            $query .= " AND e.enrollment_type = ?";
+            $params[] = $enrollment_type;
+        }
+        
+        $query .= " ORDER BY u.last_name, u.first_name";
+        
+        $stmt = $this->pdo->prepare($query);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+    
+    public function getAllCourses() {
+        $stmt = $this->pdo->query("
+            SELECT c.*, u.first_name, u.last_name, 
+                   COUNT(DISTINCT e.user_id) as enrollment_count
+            FROM courses c
+            JOIN users u ON c.creator_id = u.user_id
+            LEFT JOIN enrollments e ON c.course_id = e.course_id
+            GROUP BY c.course_id
+            ORDER BY c.created_at DESC
+        ");
+        return $stmt->fetchAll();
+    }
+} ?>
